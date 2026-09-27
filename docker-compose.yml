@@ -1,0 +1,7 @@
+services:
+  projector-workbench:
+    build: .
+    container_name: projector-workbench
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
