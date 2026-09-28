@@ -195,12 +195,30 @@ function renderTop() {
       if (!isSel && !state.showAll) continue;
       const color = colorOf(sr.id);
       for (const r of sr.region) {
-        el('rect', {
-          x: r[0], y: r[1], width: Math.max(0, r[2] - r[0]), height: Math.max(0, r[3] - r[1]),
-          fill: color, 'fill-opacity': isSel ? 0.30 : 0.10,
-          stroke: color, 'stroke-width': isSel ? 0.02 : 0.01,
-          'stroke-opacity': isSel ? 0.95 : 0.45,
-        }, svg);
+        if (r[2] - r[0] <= 1e-6 && r[3] - r[1] > 1e-6) {
+          // 退化可行域：固定 x 的安装线段，画成粗线段
+          el('line', {
+            x1: r[0], y1: r[1], x2: r[2], y2: r[3],
+            stroke: color, 'stroke-width': isSel ? 0.07 : 0.05,
+            'stroke-linecap': 'round',
+            'stroke-opacity': isSel ? 0.95 : 0.55,
+          }, svg);
+          if (isSel) {
+            for (const yy of [r[1], r[3]]) {
+              el('line', {
+                x1: r[0] - 0.1, y1: yy, x2: r[0] + 0.1, y2: yy,
+                stroke: color, 'stroke-width': 0.02, 'stroke-opacity': 0.9,
+              }, svg);
+            }
+          }
+        } else {
+          el('rect', {
+            x: r[0], y: r[1], width: Math.max(0, r[2] - r[0]), height: Math.max(0, r[3] - r[1]),
+            fill: color, 'fill-opacity': isSel ? 0.30 : 0.10,
+            stroke: color, 'stroke-width': isSel ? 0.02 : 0.01,
+            'stroke-opacity': isSel ? 0.95 : 0.45,
+          }, svg);
+        }
       }
     }
     // 选中方案：基础交集矩形 + 投射距离边界线
@@ -220,6 +238,12 @@ function renderTop() {
           el('line', { x1: 0, y1: yy, x2: W, y2: yy, stroke: color, 'stroke-width': 0.014, 'stroke-dasharray': '0.14 0.07', 'stroke-opacity': 0.7 }, svg);
           textAt(svg, 0.06, yy - 0.1, lbl, 0.11, color, 'start');
         }
+      }
+      // 安装线方案：标注扣除障碍后的可行总长度
+      if (sel.domain === 'line' && sel.line_length > 0 && sel.region.length) {
+        const f = sel.region[0];
+        textAt(svg, f[0] + 0.14, (f[1] + f[3]) / 2,
+          `安装线可行长度 ${fmt(sel.line_length)} m`, 0.12, color, 'start');
       }
     }
   }
@@ -397,12 +421,23 @@ function renderSchemeList() {
   const ul = document.getElementById('schemeList');
   ul.innerHTML = '';
   const items = state.schemes.map(sch => ({ sch, r: resultById[sch.id] }));
-  items.sort((a, b) => (b.r && b.r.feasible ? b.r.area : 0) - (a.r && a.r.feasible ? a.r.area : 0));
+  // 可行方案排在不可行前；可行方案内普通二维区域（按面积降序）在前、退化安装线（按可行长度降序）在后
+  const rankOf = r => (!r || !r.feasible) ? 2 : (r.domain === 'line' ? 1 : 0);
+  const metricOf = r => (!r || !r.feasible) ? 0 : (r.domain === 'line' ? r.line_length : r.area);
+  items.sort((a, b) => {
+    const ra = rankOf(a.r), rb = rankOf(b.r);
+    if (ra !== rb) return ra - rb;
+    return metricOf(b.r) - metricOf(a.r);
+  });
   items.forEach(({ sch, r }, i) => {
     const li = document.createElement('li');
     li.className = 'scheme-item' + (sch.id === state.selectedSchemeId ? ' selected' : '');
     const feasible = r && r.feasible;
-    const areaTxt = r ? (feasible ? `${fmt(r.area)} m²` : '不可行') : '…';
+    let areaTxt;
+    if (!r) areaTxt = '…';
+    else if (feasible && r.domain === 'line') areaTxt = `安装线 ${fmt(r.line_length)} m`;
+    else if (feasible) areaTxt = `${fmt(r.area)} m²`;
+    else areaTxt = '不可行';
     li.innerHTML =
       `<span class="rank">${i + 1}</span>` +
       `<span class="chip" style="background:${colorOf(sch.id)}"></span>` +
@@ -450,7 +485,12 @@ function renderPointInfo() {
     html += `<div class="diag-box"><b>⚠ 可安装区域为空，冲突约束：</b><ul>` +
       sel.diagnostics.map(d => `<li>${esc(d)}</li>`).join('') + '</ul></div>';
   } else if (sel.feasible) {
-    html += `<div class="ok-box">✅ 可安装区域面积 <b>${fmt(sel.area)} m²</b>（镜头位置）</div>`;
+    if (sel.domain === 'line') {
+      html += `<div class="ok-box">✅ 水平位移为 0，退化为固定 x=<b>${fmt(sel.base_rect[0])}m</b> 的安装线，` +
+        `扣除禁装区后可行纵深合计 <b>${fmt(sel.line_length)} m</b>（面积为 0 但仍可沿线安放）</div>`;
+    } else {
+      html += `<div class="ok-box">✅ 可安装区域面积 <b>${fmt(sel.area)} m²</b>（镜头位置）</div>`;
+    }
   }
   const p = sel.point;
   if (p) {

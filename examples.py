@@ -17,6 +17,10 @@ EXAMPLES = [
                 {"name": "长焦镜头 2.0–3.2", "tr_min": 2.0, "tr_max": 3.2,
                  "h_shift": 0.50, "v_shift": 0.60,
                  "body_w": 0.45, "body_d": 0.38, "body_h": 0.18},
+                {"name": "定焦镜头 1.3–2.1（水平位移 0，安装线）",
+                 "tr_min": 1.3, "tr_max": 2.1,
+                 "h_shift": 0.0, "v_shift": 0.50,
+                 "body_w": 0.40, "body_d": 0.32, "body_h": 0.15},
             ],
             "obstacles": [
                 {"name": "吊灯", "x": 2.65, "y": 3.4, "w": 1.2, "h": 0.8},

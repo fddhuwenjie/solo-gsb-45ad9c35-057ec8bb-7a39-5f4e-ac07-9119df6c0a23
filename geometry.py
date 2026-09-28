@@ -11,18 +11,59 @@
   3. 墙面余量：机身矩形不得越出四墙内缩 margin 的范围
   4. 机身避障：机身矩形不得与任何禁装区相交
 交集为空时给出导致为空的约束诊断。
+
+退化可行域（安装线）：水平镜头位移为 0（或位移带被墙面余量夹成单点）
+时，px 固定为某一 x，可安装区域退化为一条纵深线段。只要线段长度大于 0
+即可沿纵深安放机身，因此线段同样视为可行域（面积为 0 但 line_length > 0）。
+此时禁装区仍按机身尺寸膨胀，仅当膨胀后的 x 区间覆盖该固定 x（含严格内点，
+边界接触不算碰撞），才把其 y 区间投影为纵深禁段从安装线上扣除；线段被全部
+覆盖时才给出避障无解诊断。
 """
 
 EPS = 1e-9
 
 
+def rect_w(r):
+    return max(0.0, r[2] - r[0])
+
+
+def rect_h(r):
+    return max(0.0, r[3] - r[1])
+
+
 def rect_area(r):
-    return max(0.0, r[2] - r[0]) * max(0.0, r[3] - r[1])
+    return rect_w(r) * rect_h(r)
 
 
 def rects_intersect(a, b):
     return (min(a[2], b[2]) - max(a[0], b[0]) > EPS and
             min(a[3], b[3]) - max(a[1], b[1]) > EPS)
+
+
+def interval_hit(a, b, lo, hi):
+    """开区间式重叠判定：区间 (a,b) 与 (lo,hi) 是否有严格大于 EPS 的重叠。
+    边界接触（端点相等或间隙 ≤ EPS）不算命中，与矩形扣除的接触规则一致。
+    当 a==b（固定 x 的安装线退化为点）时按严格包含判定。"""
+    if abs(b - a) <= EPS:
+        return lo + EPS < a < hi - EPS
+    return min(b, hi) - max(a, lo) > EPS
+
+
+def subtract_interval(seg, lo, hi):
+    """从纵深线段 seg=(a,b) 中扣除禁段 (lo,hi)，返回剩余线段。
+    与 subtract_rect 的接触规则一致：禁段与线段无内部重叠（间隙 ≤ EPS 或
+    仅在端点相接）时不扣；严格进入线段内部才切除；切除后剩余碎段
+    长度 ≤ EPS 时丢弃（仅余单个接触点即视为该线段被完全覆盖）。"""
+    a, b = seg
+    ia, ib = max(a, lo), min(b, hi)
+    if ib - ia <= EPS:
+        return [tuple(seg)]
+    out = []
+    if ia - a > EPS:
+        out.append((a, ia))
+    if b - ib > EPS:
+        out.append((ib, b))
+    return out
 
 
 def subtract_rect(rect, hole):
@@ -138,46 +179,93 @@ def compute_scheme(room, screen, scheme, obstacles, point=None, lens_height=None
             diags.append("镜头垂直位移范围与房间净高范围无交集")
 
     # ---- 顶视图可安装区域 = 基础矩形 − 各禁装区（按机身尺寸膨胀）----
+    # x 区间退化为单点时，可行域是固定 x 的一条纵深安装线（面积为 0 但长度可 > 0）
     base_rect = None
     region = []
     area = 0.0
+    line_length = 0.0
+    domain = "empty"
     if x_ok and y_ok:
         base_rect = [x_rng[0], y_rng[0], x_rng[1], y_rng[1]]
-        region = [list(base_rect)]
-        expanded = []
-        for ob in obstacles:
-            exp = [ob["x"] - bw / 2, ob["y"] - bd,
-                   ob["x"] + ob["w"] + bw / 2, ob["y"] + ob["h"]]
-            expanded.append(exp)
-            nxt = []
-            for r in region:
-                nxt.extend(subtract_rect(r, exp))
-            region = nxt
-        area = sum(rect_area(r) for r in region)
-        if area <= EPS and rect_area(base_rect) > EPS:
-            # 逐一移除禁装区做恢复测试，找出覆盖可安装区域的元凶
-            names = []
-            for i, ob in enumerate(obstacles):
-                if not rects_intersect(base_rect, expanded[i]):
-                    continue
-                rest = [list(base_rect)]
-                for j, exp in enumerate(expanded):
-                    if i == j:
-                        continue
-                    nxt = []
-                    for r in rest:
-                        nxt.extend(subtract_rect(r, exp))
-                    rest = nxt
-                if sum(rect_area(r) for r in rest) > EPS:
-                    names.append(ob.get("name") or f"#{i + 1}")
-            if names:
-                diags.append("机身避障约束不可满足：禁装区 " +
-                             "、".join(f"「{n}」" for n in names) +
-                             " 完全覆盖了可安装区域")
+        expanded = [[ob["x"] - bw / 2, ob["y"] - bd,
+                     ob["x"] + ob["w"] + bw / 2, ob["y"] + ob["h"]]
+                    for ob in obstacles]
+        if rect_h(base_rect) <= EPS:
+            # 纵深也退化为点：线长为 0，无法安放机身
+            region = [list(base_rect)]
+            if rect_w(base_rect) <= EPS:
+                diags.append("可安装区域退化为点（水平位移与投射距离均无余量），实际无法安放机身")
             else:
-                diags.append("机身避障约束不可满足：多个禁装区组合完全覆盖了可安装区域")
-        elif area <= EPS:
-            diags.append("可安装区域退化为线或点（水平位移量为 0），实际无法安放机身")
+                diags.append("可安装区域退化为无纵深的条带（投射距离无余量），实际无法安放机身")
+        elif rect_w(base_rect) <= EPS:
+            # ---- 退化可行域：固定 x 的安装线 ----
+            x0 = x_rng[0]
+            domain = "line"
+            segs = [(y_rng[0], y_rng[1])]
+            hit_idx = []
+            for i, exp in enumerate(expanded):
+                # 固定 x 被膨胀禁装区的 x 区间严格覆盖（边界接触不算）才需要扣除
+                if not interval_hit(x0, x0, exp[0], exp[2]):
+                    continue
+                hit_idx.append(i)
+                nxt = []
+                for seg in segs:
+                    nxt.extend(subtract_interval(seg, exp[1], exp[3]))
+                segs = nxt
+            line_length = sum(b - a for a, b in segs)
+            region = [[x0, a, x0, b] for a, b in segs]
+            if line_length <= EPS and hit_idx:
+                # 逐一移除禁装区做恢复测试，找出覆盖整条安装线的元凶
+                names = []
+                for i in hit_idx:
+                    rest = [(y_rng[0], y_rng[1])]
+                    for j in hit_idx:
+                        if i == j:
+                            continue
+                        nxt = []
+                        for seg in rest:
+                            nxt.extend(subtract_interval(seg, expanded[j][1], expanded[j][3]))
+                        rest = nxt
+                    if sum(b - a for a, b in rest) > EPS:
+                        names.append(obstacles[i].get("name") or f"#{i + 1}")
+                if names:
+                    diags.append("机身避障约束不可满足：禁装区 " +
+                                 "、".join(f"「{n}」" for n in names) +
+                                 " 完全覆盖了安装线段")
+                else:
+                    diags.append("机身避障约束不可满足：多个禁装区组合完全覆盖了安装线段")
+        else:
+            # ---- 普通二维可安装区域 ----
+            domain = "area"
+            region = [list(base_rect)]
+            for exp in expanded:
+                nxt = []
+                for r in region:
+                    nxt.extend(subtract_rect(r, exp))
+                region = nxt
+            area = sum(rect_area(r) for r in region)
+            if area <= EPS:
+                # 逐一移除禁装区做恢复测试，找出覆盖可安装区域的元凶
+                names = []
+                for i, exp in enumerate(expanded):
+                    if not rects_intersect(base_rect, exp):
+                        continue
+                    rest = [list(base_rect)]
+                    for j, exp2 in enumerate(expanded):
+                        if i == j:
+                            continue
+                        nxt = []
+                        for r in rest:
+                            nxt.extend(subtract_rect(r, exp2))
+                        rest = nxt
+                    if sum(rect_area(r) for r in rest) > EPS:
+                        names.append(obstacles[i].get("name") or f"#{i + 1}")
+                if names:
+                    diags.append("机身避障约束不可满足：禁装区 " +
+                                 "、".join(f"「{n}」" for n in names) +
+                                 " 完全覆盖了可安装区域")
+                else:
+                    diags.append("机身避障约束不可满足：多个禁装区组合完全覆盖了可安装区域")
 
     # ---- 当前选点校验 ----
     pt = None
@@ -209,12 +297,15 @@ def compute_scheme(room, screen, scheme, obstacles, point=None, lens_height=None
             "v_shift_used": (hz - sc) / g["Sh"] if g["Sh"] else 0.0,
         }
 
-    feasible = bool(x_ok and y_ok and z_ok and area > EPS)
+    feasible = bool(x_ok and y_ok and z_ok and
+                    (area > EPS or line_length > EPS))
     return {
         "id": scheme.get("id"),
         "name": scheme.get("name", "方案"),
         "feasible": feasible,
+        "domain": domain,
         "area": round(area, 4),
+        "line_length": round(line_length, 4),
         "base_rect": [round(v, 4) for v in base_rect] if base_rect else None,
         "region": [[round(v, 4) for v in r] for r in region],
         "diagnostics": diags,
