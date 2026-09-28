@@ -72,4 +72,27 @@ EXAMPLES = [
             ],
         },
     },
+    {
+        "id": "centerline",
+        "name": "示例 4：零水平位移·中线安装（退化可行域）",
+        "data": {
+            "room": {"width": 5.0, "depth": 6.0, "height": 2.8, "margin": 0.3},
+            "screen": {"width": 2.0, "height": 1.13, "bottom": 0.9, "cx": 2.5},
+            "schemes": [
+                {"name": "定焦定中 2.0–3.0（线域可行）", "tr_min": 2.0, "tr_max": 3.0,
+                 "h_shift": 0.0, "v_shift": 0.50,
+                 "body_w": 0.40, "body_d": 0.35, "body_h": 0.15},
+                {"name": "短焦定中 1.5–2.0（被灯槽完全覆盖）", "tr_min": 1.5, "tr_max": 2.0,
+                 "h_shift": 0.0, "v_shift": 0.50,
+                 "body_w": 0.40, "body_d": 0.35, "body_h": 0.15},
+                {"name": "标准镜头 1.4–2.2（二维区域对照）", "tr_min": 1.4, "tr_max": 2.2,
+                 "h_shift": 0.25, "v_shift": 0.45,
+                 "body_w": 0.38, "body_d": 0.32, "body_h": 0.14},
+            ],
+            "obstacles": [
+                {"name": "吊灯", "x": 2.2, "y": 4.8, "w": 0.8, "h": 0.6},
+                {"name": "长灯槽", "x": 1.5, "y": 2.65, "w": 2.0, "h": 1.35},
+            ],
+        },
+    },
 ]

@@ -195,12 +195,27 @@ function renderTop() {
       if (!isSel && !state.showAll) continue;
       const color = colorOf(sr.id);
       for (const r of sr.region) {
-        el('rect', {
-          x: r[0], y: r[1], width: Math.max(0, r[2] - r[0]), height: Math.max(0, r[3] - r[1]),
-          fill: color, 'fill-opacity': isSel ? 0.30 : 0.10,
-          stroke: color, 'stroke-width': isSel ? 0.02 : 0.01,
-          'stroke-opacity': isSel ? 0.95 : 0.45,
-        }, svg);
+        if (Math.max(0, r[2] - r[0]) <= 1e-6 && Math.max(0, r[3] - r[1]) > 1e-6) {
+          // 退化可行域：固定 x 的安装纵深线段，画粗线（白色描边保证清晰可见）
+          const x = r[0];
+          el('line', {
+            x1: x, y1: r[1], x2: x, y2: r[3], stroke: '#fff',
+            'stroke-width': isSel ? 0.10 : 0.07, 'stroke-linecap': 'round',
+            'stroke-opacity': isSel ? 0.9 : 0.5,
+          }, svg);
+          el('line', {
+            x1: x, y1: r[1], x2: x, y2: r[3], stroke: color,
+            'stroke-width': isSel ? 0.055 : 0.04, 'stroke-linecap': 'round',
+            'stroke-opacity': isSel ? 0.95 : 0.6,
+          }, svg);
+        } else {
+          el('rect', {
+            x: r[0], y: r[1], width: Math.max(0, r[2] - r[0]), height: Math.max(0, r[3] - r[1]),
+            fill: color, 'fill-opacity': isSel ? 0.30 : 0.10,
+            stroke: color, 'stroke-width': isSel ? 0.02 : 0.01,
+            'stroke-opacity': isSel ? 0.95 : 0.45,
+          }, svg);
+        }
       }
     }
     // 选中方案：基础交集矩形 + 投射距离边界线
@@ -209,10 +224,19 @@ function renderTop() {
       const color = colorOf(sel.id);
       if (sel.base_rect) {
         const b = sel.base_rect;
-        el('rect', {
-          x: b[0], y: b[1], width: b[2] - b[0], height: b[3] - b[1], fill: 'none',
-          stroke: color, 'stroke-width': 0.018, 'stroke-dasharray': '0.1 0.05', 'stroke-opacity': 0.8,
-        }, svg);
+        if (b[2] - b[0] <= 1e-6) {
+          // 线段可行域：用虚线画出固定 x 上的完整候选纵深（扣除前）
+          el('line', {
+            x1: b[0], y1: b[1], x2: b[0], y2: b[3], stroke: color,
+            'stroke-width': 0.022, 'stroke-dasharray': '0.1 0.05', 'stroke-linecap': 'round',
+            'stroke-opacity': 0.8,
+          }, svg);
+        } else {
+          el('rect', {
+            x: b[0], y: b[1], width: b[2] - b[0], height: b[3] - b[1], fill: 'none',
+            stroke: color, 'stroke-width': 0.018, 'stroke-dasharray': '0.1 0.05', 'stroke-opacity': 0.8,
+          }, svg);
+        }
       }
       for (const [yy, lbl] of [[sel.derived.d_min, `最近投射 ${fmt(sel.derived.d_min)}m`],
                                [sel.derived.d_max, `最远投射 ${fmt(sel.derived.d_max)}m`]]) {
@@ -397,12 +421,24 @@ function renderSchemeList() {
   const ul = document.getElementById('schemeList');
   ul.innerHTML = '';
   const items = state.schemes.map(sch => ({ sch, r: resultById[sch.id] }));
-  items.sort((a, b) => (b.r && b.r.feasible ? b.r.area : 0) - (a.r && a.r.feasible ? a.r.area : 0));
+  // 可行二维区域（按面积）排在前，可行安装线段（按可行总长度）次之，不可行最后
+  const tierOf = r => {
+    if (!r || !r.feasible) return 2;
+    return r.line ? 1 : 0;
+  };
+  const scoreOf = r => {
+    if (!r || !r.feasible) return 0;
+    return r.line ? r.line.length : r.area;
+  };
+  items.sort((a, b) =>
+    (tierOf(a.r) - tierOf(b.r)) || (scoreOf(b.r) - scoreOf(a.r)));
   items.forEach(({ sch, r }, i) => {
     const li = document.createElement('li');
     li.className = 'scheme-item' + (sch.id === state.selectedSchemeId ? ' selected' : '');
     const feasible = r && r.feasible;
-    const areaTxt = r ? (feasible ? `${fmt(r.area)} m²` : '不可行') : '…';
+    const areaTxt = !r ? '…'
+      : feasible ? (r.line ? `可行线长 ${fmt(r.line.length)} m` : `${fmt(r.area)} m²`)
+      : '不可行';
     li.innerHTML =
       `<span class="rank">${i + 1}</span>` +
       `<span class="chip" style="background:${colorOf(sch.id)}"></span>` +
@@ -450,7 +486,10 @@ function renderPointInfo() {
     html += `<div class="diag-box"><b>⚠ 可安装区域为空，冲突约束：</b><ul>` +
       sel.diagnostics.map(d => `<li>${esc(d)}</li>`).join('') + '</ul></div>';
   } else if (sel.feasible) {
-    html += `<div class="ok-box">✅ 可安装区域面积 <b>${fmt(sel.area)} m²</b>（镜头位置）</div>`;
+    const sizeTxt = sel.line
+      ? `水平位移为 0，可行域为固定 x=${fmt(sel.line.x)}m 的安装线段，可行总长度 <b>${fmt(sel.line.length)} m</b>（镜头位置）`
+      : `可安装区域面积 <b>${fmt(sel.area)} m²</b>（镜头位置）`;
+    html += `<div class="ok-box">✅ ${sizeTxt}</div>`;
   }
   const p = sel.point;
   if (p) {
